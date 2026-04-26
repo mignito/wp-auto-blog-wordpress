@@ -6,13 +6,15 @@ WordPress 자동 발행 모듈
 """
 
 import os
-import requests
-import json
 import re
+import json
 import base64
-import tempfile
 import mimetypes
 from datetime import datetime
+from urllib.parse import urlparse
+
+import requests
+from Crypto.Cipher import AES
 
 
 # 카테고리 ID 매핑 (워드프레스에서 미리 만들어둔 카테고리 ID)
@@ -29,9 +31,8 @@ class WordPressPublisher:
         self.wp_url = os.getenv("WP_URL", "").rstrip("/")
         self.username = os.getenv("WP_USERNAME")
         self.app_password = os.getenv("WP_APP_PASSWORD")
-        self.post_status = os.getenv("WP_POST_STATUS", "draft")  # 기본: 임시저장
+        self.post_status = os.getenv("WP_POST_STATUS", "draft")
 
-        # Basic Auth 헤더
         credentials = f"{self.username}:{self.app_password}"
         token = base64.b64encode(credentials.encode()).decode()
         self.headers = {
@@ -39,6 +40,55 @@ class WordPressPublisher:
             "Content-Type": "application/json",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         }
+
+        # 세션으로 쿠키 유지 (cupid.js 챌린지 통과용)
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
+        self._solve_cupid_challenge()
+
+    def _solve_cupid_challenge(self):
+        """카페24 cupid.js AES 챌린지 해결 후 세션 쿠키 설정"""
+        try:
+            resp = self.session.get(self.wp_url + "/wp-json/wp/v2/users/me", timeout=15)
+            if "cupid.js" not in resp.text:
+                return  # 챌린지 없음
+
+            html = resp.text
+            print("  [cupid] 카페24 봇 챌린지 감지 → 해결 시도 중...")
+
+            # AES 파라미터 추출: slowAES.decrypt(toNumbers("ENC"),2,toNumbers("KEY"),toNumbers("IV"))
+            pattern = r'toNumbers\("([0-9a-fA-F]+)"\)\s*,\s*2\s*,\s*toNumbers\("([0-9a-fA-F]+)"\)\s*,\s*toNumbers\("([0-9a-fA-F]+)"\)'
+            match = re.search(pattern, html)
+            if not match:
+                print("  [cupid] 파라미터 추출 실패 - 전체 응답 일부:", html[:300])
+                return
+
+            enc_hex, key_hex, iv_hex = match.group(1), match.group(2), match.group(3)
+            encrypted = bytes.fromhex(enc_hex)
+            key = bytes.fromhex(key_hex)
+            iv = bytes.fromhex(iv_hex)
+
+            # AES-CBC 복호화
+            cipher = AES.new(key, AES.MODE_CBC, iv)
+            decrypted = cipher.decrypt(encrypted)
+            cookie_value = decrypted.hex()
+
+            # 쿠키 이름 추출 (document.cookie = "NAME=...")
+            name_match = re.search(r'document\.cookie\s*=\s*["\'](\w+)=', html)
+            cookie_name = name_match.group(1) if name_match else "cakey"
+
+            domain = urlparse(self.wp_url).hostname
+            self.session.cookies.set(cookie_name, cookie_value, domain=domain)
+            print(f"  [cupid] 챌린지 해결 완료 (쿠키: {cookie_name})")
+
+        except Exception as e:
+            print(f"  [cupid] 챌린지 해결 오류: {e}")
+
+    def _get(self, url, **kwargs):
+        return self.session.get(url, **kwargs)
+
+    def _post(self, url, **kwargs):
+        return self.session.post(url, **kwargs)
 
     def _api_url(self, endpoint: str) -> str:
         return f"{self.wp_url}/wp-json/wp/v2/{endpoint}"
@@ -52,9 +102,8 @@ class WordPressPublisher:
 
         # WordPress에서 카테고리 검색
         try:
-            response = requests.get(
+            response = self._get(
                 self._api_url("categories"),
-                headers=self.headers,
                 params={"search": category_name, "per_page": 5},
                 timeout=15
             )
@@ -65,9 +114,8 @@ class WordPressPublisher:
                         return cat["id"]
 
             # 없으면 새로 생성
-            response = requests.post(
+            response = self._post(
                 self._api_url("categories"),
-                headers=self.headers,
                 json={"name": category_name},
                 timeout=15
             )
@@ -84,9 +132,8 @@ class WordPressPublisher:
         for tag_name in tag_names[:5]:  # 최대 5개
             try:
                 # 태그 검색
-                response = requests.get(
+                response = self._get(
                     self._api_url("tags"),
-                    headers=self.headers,
                     params={"search": tag_name, "per_page": 5},
                     timeout=10
                 )
@@ -98,9 +145,8 @@ class WordPressPublisher:
                         continue
 
                 # 없으면 생성
-                response = requests.post(
+                response = self._post(
                     self._api_url("tags"),
-                    headers=self.headers,
                     json={"name": tag_name},
                     timeout=10
                 )
@@ -129,12 +175,12 @@ class WordPressPublisher:
 
             # WordPress에 업로드
             upload_headers = {
-                "Authorization": self.headers["Authorization"],
+                **dict(self.session.headers),
                 "Content-Disposition": f'attachment; filename="{filename}"',
-                "Content-Type": "image/jpeg"
+                "Content-Type": "image/jpeg",
             }
 
-            response = requests.post(
+            response = self.session.post(
                 self._api_url("media"),
                 headers=upload_headers,
                 data=img_response.content,
@@ -154,9 +200,8 @@ class WordPressPublisher:
                 credit    = image_data.get("photographer", "")
                 caption   = f"출처: {source} / {credit}" if credit else f"출처: {source}"
 
-                requests.post(
+                self._post(
                     self._api_url(f"media/{media_id}"),
-                    headers=self.headers,
                     json={"alt_text": alt_text, "caption": caption},
                     timeout=10
                 )
@@ -182,9 +227,8 @@ class WordPressPublisher:
 
         # 방법 1: REST API meta 업데이트
         try:
-            resp = requests.post(
+            resp = self._post(
                 self._api_url(f"posts/{post_id}"),
-                headers=self.headers,
                 json={
                     "comment_status": "closed",
                     "ping_status":    "closed",
@@ -308,9 +352,8 @@ class WordPressPublisher:
 
         # 포스트 생성
         try:
-            response = requests.post(
+            response = self._post(
                 self._api_url("posts"),
-                headers=self.headers,
                 json=post_data,
                 timeout=30
             )
@@ -339,11 +382,7 @@ class WordPressPublisher:
     def test_connection(self) -> bool:
         """WordPress 연결 테스트"""
         try:
-            response = requests.get(
-                self._api_url("users/me"),
-                headers=self.headers,
-                timeout=10
-            )
+            response = self._get(self._api_url("users/me"), timeout=10)
             print(f"  [DEBUG] 연결 상태: HTTP {response.status_code}")
             print(f"  [DEBUG] 응답 본문 (100자): {response.text[:100]!r}")
             if response.status_code == 200:
