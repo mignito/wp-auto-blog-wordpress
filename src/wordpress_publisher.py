@@ -8,12 +8,12 @@ WordPress 자동 발행 모듈
 import os
 import re
 import json
-import base64
 import mimetypes
 from datetime import datetime
 from urllib.parse import urlparse
 
 import requests
+from requests.auth import HTTPBasicAuth
 from Crypto.Cipher import AES
 
 
@@ -29,21 +29,19 @@ CATEGORY_IDS = {
 class WordPressPublisher:
     def __init__(self):
         self.wp_url = os.getenv("WP_URL", "").rstrip("/")
-        self.username = os.getenv("WP_USERNAME")
-        self.app_password = os.getenv("WP_APP_PASSWORD")
+        self.username = (os.getenv("WP_USERNAME") or "").strip()
+        self.app_password = (os.getenv("WP_APP_PASSWORD") or "").strip()
         self.post_status = os.getenv("WP_POST_STATUS", "draft")
 
-        credentials = f"{self.username}:{self.app_password}"
-        token = base64.b64encode(credentials.encode()).decode()
         self.headers = {
-            "Authorization": f"Basic {token}",
             "Content-Type": "application/json",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         }
 
-        # 세션으로 쿠키 유지 (cupid.js 챌린지 통과용)
+        # 세션으로 쿠키 유지 + HTTPBasicAuth로 리다이렉트 후에도 인증 유지
         self.session = requests.Session()
         self.session.headers.update(self.headers)
+        self.session.auth = HTTPBasicAuth(self.username, self.app_password)
         self._solve_cupid_challenge()
 
     def _solve_cupid_challenge(self):
@@ -191,7 +189,7 @@ class WordPressPublisher:
 
             # WordPress에 업로드
             upload_headers = {
-                **dict(self.session.headers),
+                "User-Agent": self.headers["User-Agent"],
                 "Content-Disposition": f'attachment; filename="{filename}"',
                 "Content-Type": "image/jpeg",
             }
