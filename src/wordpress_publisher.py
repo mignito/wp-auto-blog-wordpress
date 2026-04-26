@@ -56,31 +56,46 @@ class WordPressPublisher:
             html = resp.text
             print("  [cupid] 카페24 봇 챌린지 감지 → 해결 시도 중...")
 
-            # AES 파라미터 추출: slowAES.decrypt(toNumbers("ENC"),2,toNumbers("KEY"),toNumbers("IV"))
-            pattern = r'toNumbers\("([0-9a-fA-F]+)"\)\s*,\s*2\s*,\s*toNumbers\("([0-9a-fA-F]+)"\)\s*,\s*toNumbers\("([0-9a-fA-F]+)"\)'
-            match = re.search(pattern, html)
-            if not match:
+            # 카페24 형식: var a=toNumbers("KEY"),b=toNumbers("IV"),c=toNumbers("ENC");
+            # slowAES.decrypt(c, 2, a, b) → decrypt(ciphertext=c, CBC, key=a, iv=b)
+            abc = re.findall(r'toNumbers\("([0-9a-fA-F]+)"\)', html)
+            decrypt_match = re.search(r'slowAES\.decrypt\((\w+),\s*2,\s*(\w+),\s*(\w+)\)', html)
+
+            if len(abc) < 3 or not decrypt_match:
                 print("  [cupid] 파라미터 추출 실패 - 전체 응답:")
                 print(html)
                 return
 
-            enc_hex, key_hex, iv_hex = match.group(1), match.group(2), match.group(3)
+            # var a, b, c 순서대로 추출
+            var_map = {}
+            for i, letter in enumerate(['a', 'b', 'c']):
+                var_map[letter] = abc[i]
+
+            # decrypt(c, 2, a, b) → c=암호문, a=key, b=iv
+            c_var = decrypt_match.group(1)  # 암호문 변수
+            a_var = decrypt_match.group(2)  # key 변수
+            b_var = decrypt_match.group(3)  # iv 변수
+
+            enc_hex = var_map.get(c_var, abc[2])
+            key_hex = var_map.get(a_var, abc[0])
+            iv_hex  = var_map.get(b_var, abc[1])
+
+            key       = bytes.fromhex(key_hex)
+            iv        = bytes.fromhex(iv_hex)
             encrypted = bytes.fromhex(enc_hex)
-            key = bytes.fromhex(key_hex)
-            iv = bytes.fromhex(iv_hex)
 
             # AES-CBC 복호화
             cipher = AES.new(key, AES.MODE_CBC, iv)
             decrypted = cipher.decrypt(encrypted)
             cookie_value = decrypted.hex()
 
-            # 쿠키 이름 추출 (document.cookie = "NAME=...")
-            name_match = re.search(r'document\.cookie\s*=\s*["\'](\w+)=', html)
-            cookie_name = name_match.group(1) if name_match else "cakey"
+            # 쿠키 이름 추출 (document.cookie="CUPID=...")
+            name_match = re.search(r'document\.cookie\s*=\s*"(\w+)=', html)
+            cookie_name = name_match.group(1) if name_match else "CUPID"
 
             domain = urlparse(self.wp_url).hostname
             self.session.cookies.set(cookie_name, cookie_value, domain=domain)
-            print(f"  [cupid] 챌린지 해결 완료 (쿠키: {cookie_name})")
+            print(f"  [cupid] 챌린지 해결 완료 (쿠키: {cookie_name}={cookie_value[:8]}...)")
 
         except Exception as e:
             print(f"  [cupid] 챌린지 해결 오류: {e}")
