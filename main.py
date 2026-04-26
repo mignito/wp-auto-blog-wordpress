@@ -126,6 +126,7 @@ def main():
     parser = argparse.ArgumentParser(description="WordPress 자동 블로그 포스팅")
     parser.add_argument("--test", action="store_true", help="연결 테스트만 실행")
     parser.add_argument("--dry", action="store_true", help="글 생성만 하고 발행 안 함")
+    parser.add_argument("--test-post", action="store_true", help="더미 글로 WordPress 발행만 테스트 (AI API 미사용)")
     parser.add_argument("--keyword", type=str, help="직접 키워드 지정 (트렌드 탐색 건너뜀)")
     parser.add_argument("--category", type=str, default="금융", help="카테고리 지정 (keyword 옵션 사용 시)")
     args = parser.parse_args()
@@ -148,6 +149,29 @@ def main():
         print("\n[연결 테스트 모드]")
         publisher = WordPressPublisher()
         publisher.test_connection()
+        return
+
+    # 더미 발행 테스트 (AI API 미사용)
+    if args.test_post:
+        print("\n[테스트 발행 모드] AI API 없이 더미 글로 WordPress 발행 테스트")
+        dummy_article = {
+            "title": "[테스트] GitHub Actions 연동 확인용 글",
+            "content": "<p>이 글은 GitHub Actions 연동 테스트용입니다. 자동으로 삭제해주세요.</p>",
+            "tags": ["테스트"],
+            "focus_keyword": "테스트",
+            "focus_keywords": ["테스트"],
+            "focus_keywords_str": "테스트",
+            "meta_description": "테스트 글입니다.",
+            "url_slug": "github-actions-test",
+        }
+        dummy_image = {"url": "", "alt": "테스트", "photographer": "", "source": ""}
+        publisher = WordPressPublisher()
+        url = publisher.publish(dummy_article, dummy_image)
+        if url:
+            print(f"\n테스트 발행 성공! URL: {url}")
+        else:
+            print("\n테스트 발행 실패.")
+            sys.exit(1)
         return
 
     # Step 1: 트렌드 키워드 탐색

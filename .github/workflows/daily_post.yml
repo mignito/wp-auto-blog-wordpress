@@ -37,7 +37,7 @@ jobs:
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
           WP_POST_STATUS: publish
           PYTHONIOENCODING: utf-8
-        run: python main.py
+        run: python main.py --test-post
 
       - name: 실패 시 알림
         if: failure()
