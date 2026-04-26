@@ -8,6 +8,7 @@ WordPress 자동 발행 모듈
 import os
 import re
 import json
+import time
 import mimetypes
 from datetime import datetime
 from urllib.parse import urlparse
@@ -172,7 +173,7 @@ class WordPressPublisher:
         return tag_ids
 
     def upload_image(self, image_data: dict) -> int | None:
-        """이미지를 WordPress 미디어 라이브러리에 업로드"""
+        """이미지를 WordPress 미디어 라이브러리에 업로드 (429 재시도 포함)"""
         image_url = image_data.get("url") or image_data.get("medium_url")
         if not image_url:
             return None
@@ -187,19 +188,33 @@ class WordPressPublisher:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"featured_{timestamp}.jpg"
 
-            # WordPress에 업로드
+            # WordPress에 업로드 (429 시 최대 3회 재시도)
             upload_headers = {
                 "User-Agent": self.headers["User-Agent"],
                 "Content-Disposition": f'attachment; filename="{filename}"',
                 "Content-Type": "image/jpeg",
             }
 
-            response = self.session.post(
-                self._api_url("media"),
-                headers=upload_headers,
-                data=img_response.content,
-                timeout=60
-            )
+            for attempt in range(3):
+                response = self.session.post(
+                    self._api_url("media"),
+                    headers=upload_headers,
+                    data=img_response.content,
+                    timeout=60
+                )
+
+                if response.status_code == 201:
+                    break
+                elif response.status_code == 429:
+                    wait = 10 * (attempt + 1)
+                    print(f"  이미지 업로드 429 제한 - {wait}초 후 재시도 ({attempt+1}/3)...")
+                    time.sleep(wait)
+                else:
+                    print(f"  이미지 업로드 실패: {response.status_code}")
+                    return None
+            else:
+                print(f"  이미지 업로드 실패 (재시도 초과)")
+                return None
 
             if response.status_code == 201:
                 media_data = response.json()
@@ -214,6 +229,7 @@ class WordPressPublisher:
                 credit    = image_data.get("photographer", "")
                 caption   = f"출처: {source} / {credit}" if credit else f"출처: {source}"
 
+                time.sleep(1)
                 self._post(
                     self._api_url(f"media/{media_id}"),
                     json={"alt_text": alt_text, "caption": caption},
@@ -223,13 +239,10 @@ class WordPressPublisher:
                 # media_url을 image_data에 저장 (본문 FEATURED_IMAGE 교체에 사용)
                 image_data["_uploaded_url"] = media_url
                 return media_id
-            else:
-                print(f"  이미지 업로드 실패: {response.status_code}")
-                return None
 
         except Exception as e:
             print(f"  이미지 업로드 오류: {e}")
-            return None
+        return None
 
     def set_rankmath_seo(self, post_id: int, article: dict):
         """Rank Math 포커스 키워드 설정 - 3가지 방법으로 시도"""
@@ -293,11 +306,12 @@ class WordPressPublisher:
         print(f"  워드프레스 발행 준비 중...")
 
         # 카테고리 ID 가져오기
-        # 모든 글을 "기타정보" 카테고리로 발행
         category_id = self.get_category_id("기타정보")
+        time.sleep(1)
 
         # 태그 생성/조회
         tag_ids = self.get_or_create_tags(article.get("tags", []))
+        time.sleep(1)
 
         # 이미지 alt에 포커스 키워드 설정
         focus_kw = article.get("focus_keyword", "")
@@ -364,7 +378,8 @@ class WordPressPublisher:
         if featured_media_id:
             post_data["featured_media"] = featured_media_id
 
-        # 포스트 생성
+        # 포스트 생성 (이미지 업로드 후 잠시 대기)
+        time.sleep(2)
         try:
             response = self._post(
                 self._api_url("posts"),
@@ -385,7 +400,10 @@ class WordPressPublisher:
                 return post_url
 
             else:
-                error_msg = response.json().get("message", response.text)
+                try:
+                    error_msg = response.json().get("message", response.text[:200])
+                except Exception:
+                    error_msg = response.text[:200] or f"HTTP {response.status_code} (빈 응답)"
                 print(f"  포스트 생성 실패 ({response.status_code}): {error_msg}")
                 return ""
 

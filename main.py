@@ -137,18 +137,16 @@ def main():
 
     check_env_vars()
 
-    # WordPress 연결 사전 확인
+    # WordPress 연결 사전 확인 (이 인스턴스를 발행에도 재사용)
     print("\n[사전 확인] WordPress 연결 테스트")
-    publisher_check = WordPressPublisher()
-    if not publisher_check.test_connection():
+    publisher = WordPressPublisher()
+    if not publisher.test_connection():
         print("  WordPress 연결 실패 - 환경변수(WP_URL, WP_USERNAME, WP_APP_PASSWORD)를 확인하세요.")
         sys.exit(1)
 
     # 연결 테스트 모드
     if args.test:
-        print("\n[연결 테스트 모드]")
-        publisher = WordPressPublisher()
-        publisher.test_connection()
+        print("\n[연결 테스트 모드] 연결 성공")
         return
 
     # 더미 발행 테스트 (AI API 미사용)
@@ -165,7 +163,6 @@ def main():
             "url_slug": "github-actions-test",
         }
         dummy_image = {"url": "", "alt": "테스트", "photographer": "", "source": ""}
-        publisher = WordPressPublisher()
         url = publisher.publish(dummy_article, dummy_image)
         if url:
             print(f"\n테스트 발행 성공! URL: {url}")
@@ -313,9 +310,8 @@ def main():
     else:
         print("  이미지 없음 (기본 이미지 사용)")
 
-    # Step 4: 워드프레스 발행
+    # Step 4: 워드프레스 발행 (연결 확인 시 생성한 인스턴스 재사용)
     print("\n[Step 4] WordPress 발행")
-    publisher = WordPressPublisher()
     post_url = publisher.publish(article, image_data)
 
     # 로그 저장
