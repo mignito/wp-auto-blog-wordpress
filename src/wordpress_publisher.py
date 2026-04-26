@@ -206,14 +206,17 @@ class WordPressPublisher:
                 if response.status_code == 201:
                     break
                 elif response.status_code == 429:
+                    body_preview = response.text[:200] if response.text else "(빈 응답)"
                     wait = 10 * (attempt + 1)
-                    print(f"  이미지 업로드 429 제한 - {wait}초 후 재시도 ({attempt+1}/3)...")
+                    print(f"  이미지 업로드 429 - 서버 응답: {body_preview}")
+                    print(f"  {wait}초 후 재시도 ({attempt+1}/3)...")
                     time.sleep(wait)
                 else:
-                    print(f"  이미지 업로드 실패: {response.status_code}")
+                    body_preview = response.text[:200] if response.text else "(빈 응답)"
+                    print(f"  이미지 업로드 실패: {response.status_code} - {body_preview}")
                     return None
             else:
-                print(f"  이미지 업로드 실패 (재시도 초과)")
+                print(f"  이미지 업로드 실패 (재시도 초과) - Hostinger WAF 차단 가능성")
                 return None
 
             if response.status_code == 201:
