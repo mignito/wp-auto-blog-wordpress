@@ -1,10 +1,9 @@
-name: 매일 자동 블로그 포스팅
+name: WordPress Auto Blog
 
 on:
   schedule:
-    # 매일 오전 9시 (한국 시간 = UTC 00:00)
     - cron: '0 0 * * *'
-  workflow_dispatch:  # 수동 실행도 가능
+  workflow_dispatch:
 
 jobs:
   auto-post:
@@ -14,16 +13,12 @@ jobs:
     steps:
       - name: 코드 체크아웃
         uses: actions/checkout@v4
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
       - name: Python 3.11 설치
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
       - name: 패키지 설치
         run: pip install -r requirements.txt
@@ -38,9 +33,9 @@ jobs:
           WP_USERNAME: ${{ secrets.WP_USERNAME }}
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
           WP_POST_STATUS: publish
+          PYTHONIOENCODING: utf-8
         run: python main.py
 
-      - name: 실패 시 알림 (선택사항)
+      - name: 실패 시 알림
         if: failure()
         run: echo "포스팅 실패! GitHub Actions 로그를 확인하세요."
-        
