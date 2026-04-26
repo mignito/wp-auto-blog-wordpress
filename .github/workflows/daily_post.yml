@@ -39,6 +39,19 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python main.py
 
+      - name: 자동 포스팅 실행 (winone-worker.com)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          WP_URL: ${{ secrets.WP_URL_2 }}
+          WP_USERNAME: ${{ secrets.WP_USERNAME_2 }}
+          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD_2 }}
+          WP_POST_STATUS: publish
+          PYTHONIOENCODING: utf-8
+        run: python main.py
+
       - name: 실패 시 알림
         if: failure()
         run: echo "포스팅 실패! GitHub Actions 로그를 확인하세요."
