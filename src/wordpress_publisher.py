@@ -60,7 +60,8 @@ class WordPressPublisher:
             pattern = r'toNumbers\("([0-9a-fA-F]+)"\)\s*,\s*2\s*,\s*toNumbers\("([0-9a-fA-F]+)"\)\s*,\s*toNumbers\("([0-9a-fA-F]+)"\)'
             match = re.search(pattern, html)
             if not match:
-                print("  [cupid] 파라미터 추출 실패 - 전체 응답 일부:", html[:300])
+                print("  [cupid] 파라미터 추출 실패 - 전체 응답:")
+                print(html)
                 return
 
             enc_hex, key_hex, iv_hex = match.group(1), match.group(2), match.group(3)
