@@ -144,9 +144,9 @@ class WordPressPublisher:
     def get_or_create_tags(self, tag_names: list) -> list:
         """태그 조회 또는 생성, ID 목록 반환"""
         tag_ids = []
-        for tag_name in tag_names[:5]:  # 최대 5개
+        for tag_name in tag_names[:3]:  # 최대 3개로 줄여서 API 호출 감소
             try:
-                # 태그 검색
+                time.sleep(2)  # 태그마다 2초 대기
                 response = self._get(
                     self._api_url("tags"),
                     params={"search": tag_name, "per_page": 5},
@@ -160,6 +160,7 @@ class WordPressPublisher:
                         continue
 
                 # 없으면 생성
+                time.sleep(2)
                 response = self._post(
                     self._api_url("tags"),
                     json={"name": tag_name},
@@ -207,7 +208,7 @@ class WordPressPublisher:
                     break
                 elif response.status_code == 429:
                     body_preview = response.text[:200] if response.text else "(빈 응답)"
-                    wait = 10 * (attempt + 1)
+                    wait = 20 * (attempt + 1)  # 20초, 40초, 60초
                     print(f"  이미지 업로드 429 - 서버 응답: {body_preview}")
                     print(f"  {wait}초 후 재시도 ({attempt+1}/3)...")
                     time.sleep(wait)
@@ -310,11 +311,11 @@ class WordPressPublisher:
 
         # 카테고리 ID 가져오기
         category_id = self.get_category_id("기타정보")
-        time.sleep(1)
+        time.sleep(3)
 
         # 태그 생성/조회
         tag_ids = self.get_or_create_tags(article.get("tags", []))
-        time.sleep(1)
+        time.sleep(3)
 
         # 이미지 alt에 포커스 키워드 설정
         focus_kw = article.get("focus_keyword", "")
@@ -381,8 +382,8 @@ class WordPressPublisher:
         if featured_media_id:
             post_data["featured_media"] = featured_media_id
 
-        # 포스트 생성 (이미지 업로드 후 잠시 대기)
-        time.sleep(2)
+        # 포스트 생성 (이미지 업로드 후 충분히 대기)
+        time.sleep(5)
         try:
             response = self._post(
                 self._api_url("posts"),
