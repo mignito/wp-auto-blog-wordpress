@@ -187,9 +187,9 @@ def main():
         trend_finder = TrendFinder()
         ranked_keywords = trend_finder.find_ranked_keywords()
 
-        # 최근 5개 글 제목 가져오기 (중복 방지)
+        # 최근 10개 글 제목 가져오기 (중복 방지)
         print("\n  최근 발행 글 확인 중 (중복 주제 방지)...")
-        recent_titles = get_recent_post_keywords(5)
+        recent_titles = get_recent_post_keywords(10)
 
         # 순위 순서대로 중복 아닌 키워드 선택
         keyword_data = None
