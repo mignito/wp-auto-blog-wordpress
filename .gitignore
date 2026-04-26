@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+preview_img_*.jpg
+preview_*.html
+logs/
+사용법 및 계정내역.txt
