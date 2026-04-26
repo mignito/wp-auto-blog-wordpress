@@ -136,6 +136,13 @@ def main():
 
     check_env_vars()
 
+    # WordPress 연결 사전 확인
+    print("\n[사전 확인] WordPress 연결 테스트")
+    publisher_check = WordPressPublisher()
+    if not publisher_check.test_connection():
+        print("  WordPress 연결 실패 - 환경변수(WP_URL, WP_USERNAME, WP_APP_PASSWORD)를 확인하세요.")
+        sys.exit(1)
+
     # 연결 테스트 모드
     if args.test:
         print("\n[연결 테스트 모드]")

@@ -343,6 +343,8 @@ class WordPressPublisher:
                 headers=self.headers,
                 timeout=10
             )
+            print(f"  [DEBUG] 연결 상태: HTTP {response.status_code}")
+            print(f"  [DEBUG] 응답 본문 (100자): {response.text[:100]!r}")
             if response.status_code == 200:
                 user = response.json()
                 print(f"  WordPress 연결 성공! 사용자: {user.get('name')}")
