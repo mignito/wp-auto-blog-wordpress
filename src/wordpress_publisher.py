@@ -100,10 +100,26 @@ class WordPressPublisher:
             print(f"  [cupid] 챌린지 해결 오류: {e}")
 
     def _get(self, url, **kwargs):
-        return self.session.get(url, **kwargs)
+        """GET 요청 (연결 끊김 시 1회 재시도)"""
+        for attempt in range(2):
+            try:
+                return self.session.get(url, **kwargs)
+            except requests.exceptions.ConnectionError:
+                if attempt == 0:
+                    time.sleep(2)
+                    continue
+                raise
 
     def _post(self, url, **kwargs):
-        return self.session.post(url, **kwargs)
+        """POST 요청 (연결 끊김 시 1회 재시도)"""
+        for attempt in range(2):
+            try:
+                return self.session.post(url, **kwargs)
+            except requests.exceptions.ConnectionError:
+                if attempt == 0:
+                    time.sleep(2)
+                    continue
+                raise
 
     def _api_url(self, endpoint: str) -> str:
         return f"{self.wp_url}/wp-json/wp/v2/{endpoint}"
@@ -190,11 +206,14 @@ class WordPressPublisher:
             filename = f"featured_{timestamp}.jpg"
 
             # WordPress에 업로드 - multipart/form-data 방식 (WAF 우회)
+            # Content-Type을 None으로 설정해 세션 기본값(application/json)을 제거
+            # → requests가 multipart boundary를 자동으로 설정하게 함
             for attempt in range(3):
                 files = {"file": (filename, img_response.content, "image/jpeg")}
                 response = self.session.post(
                     self._api_url("media"),
                     files=files,
+                    headers={"Content-Type": None},
                     timeout=60
                 )
 
