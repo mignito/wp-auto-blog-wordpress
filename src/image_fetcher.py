@@ -120,7 +120,7 @@ class ImageFetcher:
             print("  Pexels 이미지 검색 중...")
             result = self._pexels(query, category)
             if result:
-                print(f"  ✓ Pexels 이미지 선택 ({result['photographer']})")
+                print(f"  [OK] Pexels 이미지 선택 ({result['photographer']})")
                 return result
 
         # 2순위: Pixabay
@@ -128,13 +128,13 @@ class ImageFetcher:
             print("  Pixabay 이미지 검색 중...")
             result = self._pixabay(query, category)
             if result:
-                print(f"  ✓ Pixabay 이미지 선택 ({result['photographer']})")
+                print(f"  [OK] Pixabay 이미지 선택 ({result['photographer']})")
                 return result
 
         # 3순위: Picsum (항상 성공)
         print("  Picsum 이미지 사용 중...")
         result = self._picsum(query or category)
-        print("  ✓ Picsum 이미지 선택 완료")
+        print("  [OK] Picsum 이미지 선택 완료")
         return result
 
     def download_image(self, image_data: dict, save_path: str) -> bool:
