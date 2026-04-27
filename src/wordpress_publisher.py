@@ -189,18 +189,12 @@ class WordPressPublisher:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"featured_{timestamp}.jpg"
 
-            # WordPress에 업로드 (429 시 최대 3회 재시도)
-            upload_headers = {
-                "User-Agent": self.headers["User-Agent"],
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "Content-Type": "image/jpeg",
-            }
-
+            # WordPress에 업로드 - multipart/form-data 방식 (WAF 우회)
             for attempt in range(3):
+                files = {"file": (filename, img_response.content, "image/jpeg")}
                 response = self.session.post(
                     self._api_url("media"),
-                    headers=upload_headers,
-                    data=img_response.content,
+                    files=files,
                     timeout=60
                 )
 
