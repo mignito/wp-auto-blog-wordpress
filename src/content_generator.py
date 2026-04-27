@@ -269,8 +269,10 @@ JSON 배열만 출력."""
             "lsi_keywords": outline.get("lsi_keywords", [])
         }
 
-    def generate_article(self, keyword_data: dict) -> dict:
-        """전체 글 생성 (3단계: 아웃라인 → 본문 → 메타)"""
+    def generate_article(self, keyword_data: dict, session=None) -> dict:
+        """전체 글 생성 (3단계: 아웃라인 → 본문 → 메타)
+        session: WordPressPublisher의 인증된 세션 (관련글 로딩에 사용)
+        """
         keyword = keyword_data["keyword"]
         category = keyword_data["category"]
 
@@ -299,7 +301,7 @@ JSON 배열만 출력."""
         references = self._get_references_section(category)
 
         print(f"  [관련글] WordPress에서 추천 글 가져오는 중...")
-        related_posts = self._get_related_posts(keyword, category)
+        related_posts = self._get_related_posts(keyword, category, session=session)
 
         final_content = body_section + references + "\n" + related_posts
 
@@ -316,34 +318,41 @@ JSON 배열만 출력."""
             "lsi_keywords": seo_meta["lsi_keywords"]
         }
 
-    def _get_related_posts(self, keyword: str, category: str) -> str:
+    def _get_related_posts(self, keyword: str, category: str, session=None) -> str:
+        """WordPress 최근 글 3개를 가져와 추천 섹션 생성
+        session: 인증된 세션(카페24 cupid 쿠키 포함)이 있으면 그대로 사용
+        """
         wp_url = os.getenv("WP_URL", "").rstrip("/")
         username = os.getenv("WP_USERNAME")
         app_password = os.getenv("WP_APP_PASSWORD")
 
         try:
-            credentials = f"{username}:{app_password}"
-            token = base64.b64encode(credentials.encode()).decode()
-            headers = {"Authorization": f"Basic {token}"}
+            api_url = f"{wp_url}/wp-json/wp/v2/posts"
+            params = {"per_page": 10, "status": "publish", "orderby": "date"}
 
-            resp = requests.get(
-                f"{wp_url}/wp-json/wp/v2/posts",
-                headers=headers,
-                params={"per_page": 10, "status": "publish", "orderby": "date"},
-                timeout=10
-            )
+            if session:
+                resp = session.get(api_url, params=params, timeout=10)
+            else:
+                credentials = f"{username}:{app_password}"
+                token = base64.b64encode(credentials.encode()).decode()
+                headers = {"Authorization": f"Basic {token}"}
+                resp = requests.get(api_url, headers=headers, params=params, timeout=10)
 
             if resp.status_code == 200:
                 posts = resp.json()
-                if posts:
+                if posts and isinstance(posts, list):
+                    import random
+                    # 최대 10개 중 랜덤 3개 선택
+                    sample = random.sample(posts, min(3, len(posts)))
                     links_html = ""
-                    for post in posts[:5]:
+                    for post in sample:
                         title = post.get("title", {}).get("rendered", "")
                         link  = post.get("link", "")
                         if title and link:
                             links_html += f'<li><a href="{link}">{title}</a></li>\n'
 
                     if links_html:
+                        print(f"  관련 글 {len(sample)}개 로딩 완료")
                         return f"""
 <div style="background:#f0f4ff;border:1px solid #c5d0f0;padding:20px;margin:25px 0;border-radius:8px;">
 <h3 style="margin-top:0;color:#2c3e50;">📚 함께 읽으면 유용한 글</h3>
@@ -354,14 +363,8 @@ JSON 배열만 출력."""
         except Exception as e:
             print(f"  관련 글 가져오기 오류: {e}")
 
-        site_name = wp_url.replace("https://", "").replace("http://", "")
-        return f"""
-<div style="background:#f0f4ff;border:1px solid #c5d0f0;padding:20px;margin:25px 0;border-radius:8px;">
-<h3 style="margin-top:0;color:#2c3e50;">📚 함께 읽으면 유용한 글</h3>
-<ul style="margin:0;padding-left:20px;line-height:2;">
-<li><a href="{wp_url}">{site_name} 메인으로 이동</a></li>
-</ul>
-</div>"""
+        # 글이 없거나 실패 시 빈 섹션 반환 (메인 링크 노출 안 함)
+        return ""
 
     def _get_references_section(self, category: str) -> str:
         refs = {

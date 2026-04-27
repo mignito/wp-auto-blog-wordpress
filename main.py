@@ -210,10 +210,10 @@ def main():
     print(f"  키워드: {keyword_data['keyword']} | 카테고리: {keyword_data['category']}")
     print(f"  Google 점수: {keyword_data.get('google_score', 'N/A')} | Naver 비율: {keyword_data.get('naver_ratio', 'N/A')}")
 
-    # Step 2: 콘텐츠 생성
+    # Step 2: 콘텐츠 생성 (publisher의 인증 세션을 전달해 관련글 로딩)
     print("\n[Step 2] 콘텐츠 생성")
     content_gen = ContentGenerator()
-    article = content_gen.generate_article(keyword_data)
+    article = content_gen.generate_article(keyword_data, session=publisher.session)
     print(f"  제목: {article['title']}")
     print(f"  태그: {', '.join(article['tags'])}")
 

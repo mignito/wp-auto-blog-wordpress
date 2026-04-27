@@ -343,20 +343,27 @@ class WordPressPublisher:
         content = article["content"]
         uploaded_url = image_data.get("_uploaded_url", "")
         if uploaded_url:
-            img_tag = (
-                f'<figure style="margin:20px 0;text-align:center;">'
-                f'<img src="{uploaded_url}" alt="{focus_kw} 이미지" '
-                f'style="max-width:100%;height:auto;border-radius:8px;" />'
-                f'<figcaption style="font-size:12px;color:#888;margin-top:6px;">'
-                f'{focus_kw} 관련 이미지</figcaption></figure>'
-            )
+            # 큰따옴표/작은따옴표 모두 대응
             content = content.replace('<img src="FEATURED_IMAGE"', f'<img src="{uploaded_url}"')
-            # 이미지가 figure로 감싸지지 않았다면 교체
+            content = content.replace("<img src='FEATURED_IMAGE'", f'<img src="{uploaded_url}"')
+            # 위 패턴으로 안 잡힌 경우 단순 치환
             if 'FEATURED_IMAGE' in content:
                 content = content.replace('FEATURED_IMAGE', uploaded_url)
+            # 그래도 본문에 이미지가 없으면 첫 번째 </h2> 바로 뒤에 삽입
+            if uploaded_url not in content:
+                img_html = (
+                    f'<figure style="margin:25px 0;text-align:center;">'
+                    f'<img src="{uploaded_url}" alt="{focus_kw} 이미지" '
+                    f'style="max-width:100%;height:auto;border-radius:8px;" />'
+                    f'<figcaption style="font-size:13px;color:#888;margin-top:6px;">'
+                    f'{focus_kw} 관련 이미지</figcaption></figure>'
+                )
+                content = content.replace('</h2>', f'</h2>{img_html}', 1)
         else:
-            # 업로드 실패 시 플레이스홀더 제거
-            content = re.sub(r'<img src="FEATURED_IMAGE"[^>]*/>', '', content)
+            # 업로드 실패 시 FEATURED_IMAGE 관련 블록 전체 제거
+            content = re.sub(r'<figure[^>]*>[\s\S]*?FEATURED_IMAGE[\s\S]*?</figure>', '', content)
+            content = re.sub(r'<img[^>]*FEATURED_IMAGE[^>]*/>', '', content)
+            content = content.replace('FEATURED_IMAGE', '')
 
         # URL 슬러그 설정
         url_slug = article.get("url_slug", "")
