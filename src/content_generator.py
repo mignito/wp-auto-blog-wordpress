@@ -36,6 +36,38 @@ DISCLAIMER = {
 class ContentGenerator:
     CURRENT_YEAR = "2026"
 
+    # 본문 생성 system prompt의 정적 부분 — 매 호출마다 동일하므로 prompt cache 대상
+    _BODY_SYSTEM_STATIC = """직접 겪은 경험담을 바탕으로 SEO 최적화된 블로그 글을 씁니다.
+
+【글쓰기 규칙】
+1. 도입부: 개인 경험 에피소드로 시작 ("제가 작년에...", "지인이 이 문제로...")
+2. 본문: 시행착오/실패담 1개 이상 포함, 구체적 수치 언급
+3. 문체: 구어체 (거든요/더라고요/잖아요), 짧은 문장+긴 문장 교차
+4. 금지: "물론", "또한", "따라서", "이처럼", "결론적으로" 사용 금지
+5. HTML 구조 엄수, 마크다운 절대 금지
+
+【SEO 필수 규칙】
+- H2 2개 이상에 포커스 키워드 포함
+- 첫 문단 10% 이내 키워드 자연 배치
+- 키워드 밀도 1.5~2.5% (15~20회)
+- <strong> 태그로 키워드 강조 3회 이상
+- 외부 링크 2개 이상 (공신력 기관, DoFollow)
+- 내부 링크 1개: <a href="/관련글/">관련글</a>
+- 총 분량: 1500~2000자
+
+【스타일】
+중요 내용: <span style="color:#1a73e8;font-weight:bold;">내용</span>
+주의사항: <span style="color:#dc3545;font-weight:bold;">내용</span>
+핵심박스: <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:12px 15px;margin:15px 0;border-radius:4px;"><strong>💡 핵심 포인트</strong><br>내용</div>
+주의박스: <div style="background:#f8d7da;border-left:4px solid #dc3545;padding:12px 15px;margin:15px 0;border-radius:4px;"><strong>⚠️ 주의</strong><br>내용</div>
+꿀팁박스: <div style="background:#d4edda;border-left:4px solid #28a745;padding:12px 15px;margin:15px 0;border-radius:4px;"><strong>✅ 꿀팁</strong><br>내용</div>
+
+【이미지】3번째 H2 직후 1개 삽입 (user 메시지의 이미지 HTML 형식 그대로 사용)
+
+【구성순서】도입부 → H2(정의/개요+표) → H2(방법/절차+ol) → H2(주의사항+표) → H2(사례/팁) → H2(FAQ: <dl><dt><dd>) → H2(마치며+RELATED_POSTS_PLACEHOLDER)
+
+HTML만 출력."""
+
     TITLE_PATTERNS = [
         "{year}년 {keyword} 완벽 정리 | 꼭 알아야 할 핵심 정보",
         "{keyword} 관련 {n}가지 핵심 정보 완벽 정리",
@@ -49,7 +81,7 @@ class ContentGenerator:
         self.model = "claude-sonnet-4-6"               # 본문 생성용 (고품질)
         self.cheap_model = "claude-haiku-4-5-20251001" # 아웃라인/키워드용 (저렴)
 
-    def _call_claude(self, system_prompt: str, user_prompt: str, max_tokens: int = 4000, cheap: bool = False) -> str:
+    def _call_claude(self, system_prompt, user_prompt: str, max_tokens: int = 4000, cheap: bool = False) -> str:
         """Claude API 호출 (529 과부하 시 최대 3회 재시도)"""
         import time
         model = self.cheap_model if cheap else self.model
@@ -144,7 +176,7 @@ Rank Math SEO 만점 기준 아웃라인을 JSON으로 작성:
 
 JSON만 출력."""
 
-        result = self._call_claude(system, user, max_tokens=1500, cheap=True)
+        result = self._call_claude(system, user, max_tokens=1000, cheap=True)
 
         json_match = re.search(r'\{.*\}', result, re.DOTALL)
         if json_match:
@@ -163,46 +195,34 @@ JSON만 출력."""
         }
 
     def generate_article_body(self, keyword_data: dict, outline: dict) -> str:
-        """Pass 2: 본문 작성 + 인간화 통합 (Sonnet)"""
+        """Pass 2: 본문 작성 + 인간화 통합 (Sonnet, prompt cache 적용)"""
         keyword = keyword_data["keyword"]
         category = keyword_data["category"]
 
-        system = f"""당신은 {category} 분야 15년 경력 블로거입니다.
-직접 겪은 경험담을 바탕으로 SEO 최적화된 블로그 글을 씁니다.
-
-【글쓰기 규칙】
-1. 도입부: 개인 경험 에피소드로 시작 ("제가 작년에...", "지인이 이 문제로...")
-2. 본문: 시행착오/실패담 1개 이상 포함, 구체적 수치 언급
-3. 문체: 구어체 (거든요/더라고요/잖아요), 짧은 문장+긴 문장 교차
-4. 금지: "물론", "또한", "따라서", "이처럼", "결론적으로" 사용 금지
-5. HTML 구조 엄수, 마크다운 절대 금지
-
-【SEO 필수 규칙】
-- H2 2개 이상에 포커스 키워드 포함
-- 첫 문단 10% 이내 키워드 자연 배치
-- 키워드 밀도 1.5~2.5% (15~20회)
-- <strong> 태그로 키워드 강조 3회 이상
-- 외부 링크 2개 이상 (공신력 기관, DoFollow)
-- 내부 링크 1개: <a href="/관련글/">관련글</a>
-- 총 분량: 1500~2000자
-
-【스타일】
-중요 내용: <span style="color:#1a73e8;font-weight:bold;">내용</span>
-주의사항: <span style="color:#dc3545;font-weight:bold;">내용</span>
-핵심박스: <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:12px 15px;margin:15px 0;border-radius:4px;"><strong>💡 핵심 포인트</strong><br>내용</div>
-주의박스: <div style="background:#f8d7da;border-left:4px solid #dc3545;padding:12px 15px;margin:15px 0;border-radius:4px;"><strong>⚠️ 주의</strong><br>내용</div>
-꿀팁박스: <div style="background:#d4edda;border-left:4px solid #28a745;padding:12px 15px;margin:15px 0;border-radius:4px;"><strong>✅ 꿀팁</strong><br>내용</div>
-
-【이미지】3번째 H2 직후 1개만:
-<figure style="margin:25px 0;text-align:center;"><img src="FEATURED_IMAGE" alt="{keyword} 이미지" style="max-width:100%;height:auto;border-radius:8px;" /><figcaption style="font-size:13px;color:#888;margin-top:6px;">{keyword} 관련 이미지</figcaption></figure>
-
-【구성순서】도입부 → H2(정의/개요+표) → H2(방법/절차+ol) → H2(주의사항+표) → H2(사례/팁) → H2(FAQ: <dl><dt><dd>) → H2(마치며+RELATED_POSTS_PLACEHOLDER)
-
-HTML만 출력."""
+        # 정적 부분을 cache_control로 캐싱, 동적 카테고리는 별도 블록으로 분리
+        system = [
+            {
+                "type": "text",
+                "text": self._BODY_SYSTEM_STATIC,
+                "cache_control": {"type": "ephemeral"}
+            },
+            {
+                "type": "text",
+                "text": f"당신은 {category} 분야 15년 경력 블로거입니다."
+            }
+        ]
 
         sections_text = json.dumps(outline.get("sections", []), ensure_ascii=False)
         lsi_keywords = ", ".join(outline.get("lsi_keywords", []))
         faq_text = json.dumps(outline.get("faq", []), ensure_ascii=False)
+
+        # 이미지 HTML 템플릿을 user 메시지로 이동 (system을 정적으로 유지하기 위함)
+        image_html = (
+            f'<figure style="margin:25px 0;text-align:center;">'
+            f'<img src="FEATURED_IMAGE" alt="{keyword} 이미지" style="max-width:100%;height:auto;border-radius:8px;" />'
+            f'<figcaption style="font-size:13px;color:#888;margin-top:6px;">{keyword} 관련 이미지</figcaption>'
+            f'</figure>'
+        )
 
         user = f"""키워드: "{keyword}"
 제목: {outline.get('main_title', '')}
@@ -216,6 +236,9 @@ FAQ:
 {faq_text}
 
 LSI 키워드: {lsi_keywords}
+
+이미지 HTML (3번째 H2 직후 삽입):
+{image_html}
 
 위 내용으로 HTML 블로그 글을 작성하세요. HTML만 출력."""
 
