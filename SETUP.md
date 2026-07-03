@@ -2,10 +2,9 @@
 
 ## 1단계: API 키 발급
 
-### Claude API (필수)
-1. https://console.anthropic.com 접속
-2. 회원가입 → API Keys → Create Key
-3. Settings → Billing → 월 한도 $15 설정 권장
+### Gemini API (필수)
+1. https://aistudio.google.com/ 접속
+2. 회원가입 → API 키 발급 (Create API Key)
 
 ### Pexels API (무료 이미지)
 1. https://www.pexels.com/api/ 접속
@@ -60,7 +59,7 @@ python main.py
 
 | Secret 이름 | 값 |
 |-------------|-----|
-| ANTHROPIC_API_KEY | Claude API 키 |
+| GEMINI_API_KEY | Gemini API 키 |
 | PEXELS_API_KEY | Pexels API 키 |
 | NAVER_CLIENT_ID | 네이버 Client ID |
 | NAVER_CLIENT_SECRET | 네이버 Client Secret |
@@ -99,6 +98,25 @@ python main.py --keyword "당뇨 초기증상" --category "의학/건강"
 
 ---
 
+## 하나의 폴더에서 두 개의 사이트 관리하기 (Dual Site)
+
+이 프로젝트는 하나의 폴더(Repo)에서 `winone-life.com`과 `winone-worker.com` 두 사이트를 편리하게 동시 관리할 수 있습니다.
+
+1. **설정 파일 준비**:
+   - `winone-life.com` 설정: `.env` 파일에 작성 (기본)
+   - `winone-worker.com` 설정: `.env.worker` 파일에 작성 (기존 `.env`를 복사한 후 `WP_URL`, `WP_USERNAME`, `WP_APP_PASSWORD` 항목만 `winone-worker.com` 계정 정보로 변경하여 생성)
+2. **실행 명령어**:
+   - `winone-life.com` 사이트 발행:
+     ```bash
+     python main.py --site life
+     ```
+   - `winone-worker.com` 사이트 발행:
+     ```bash
+     python main.py --site worker
+     ```
+
+---
+
 ## 발행 로그 확인
 
 `logs/` 폴더에 월별 로그가 저장됩니다.
@@ -109,4 +127,4 @@ python main.py --keyword "당뇨 초기증상" --category "의학/건강"
 
 **WordPress 401 오류**: 앱 비밀번호 재발급, WP_USERNAME 확인
 **이미지 업로드 실패**: 카페24 파일 업로드 용량 제한 확인
-**Claude API 오류**: API 크레딧 잔액 확인
+**Gemini API 오류**: API 키 및 할당량/잔액 확인

@@ -63,6 +63,24 @@ SEED_KEYWORDS = {
     ]
 }
 
+# 직장인/근로자 전용 시드 키워드 목록 (의학/건강 배제)
+SEED_KEYWORDS_WORKER = {
+    "금융": [
+        "직장인 신용대출 한도 금리", "소상공인 근로자 대출 조건",
+        "연말정산 소득공제 세액공제 차이", "IRP 계좌 개설 혜택 세액공제",
+        "ISA 계좌 단점 장점 비교", "퇴직금 중간정산 요건 신청방법",
+        "퇴직소득세 계산 방법 2026", "직장인 절세 꿀팁 소득공제",
+        "근로자 햇살론 신청 자격", "주택담보대출 LTV DSR 계산"
+    ],
+    "생활정보": [
+        "실업급여 신청 방법 조건 2026", "육아휴직 급여 신청 기간 조건",
+        "근로기준법 연차 발생 기준 개수", "주52시간 근무제 위반 기준",
+        "청년도약계좌 조건 신청기간 2026", "내일배움카드 신청방법 사용처",
+        "근로장려금 신청 자격 지급일", "체당금 신청 절차 임금체불",
+        "출산전후휴가 급여 신청방법", "재택근무 세액공제 지원금"
+    ]
+}
+
 # 영문 키워드 매핑 (Pexels 이미지 검색용)
 KEYWORD_TO_ENGLISH = {
     "금융": "finance money",
@@ -80,7 +98,8 @@ KEYWORD_TO_ENGLISH = {
 
 
 class TrendFinder:
-    def __init__(self):
+    def __init__(self, site: str = "life"):
+        self.site = site
         self.naver_client_id = os.getenv("NAVER_CLIENT_ID")
         self.naver_client_secret = os.getenv("NAVER_CLIENT_SECRET")
         self.pytrends = TrendReq(hl='ko-KR', tz=540)  # 한국 시간대
@@ -168,23 +187,24 @@ class TrendFinder:
         rising = self.get_rising_queries()
         print(f"Google 급상승: {rising[:5]}")
 
-        # 각 카테고리에서 랜덤으로 후보 선별
+        # 각 카테고리에서 랜덤으로 후보 선별 (사이트별 시드 키워드 적용)
         candidates = []
-        for category, keywords in SEED_KEYWORDS.items():
+        seed_pool = SEED_KEYWORDS_WORKER if self.site == "worker" else SEED_KEYWORDS
+        for category, keywords in seed_pool.items():
             sample = random.sample(keywords, min(4, len(keywords)))
             for kw in sample:
                 candidates.append({"keyword": kw, "category": category})
 
         # 급상승 키워드 중 관련 있는 것 추가
         finance_medical_terms = set()
-        for kws in SEED_KEYWORDS.values():
+        for kws in seed_pool.values():
             finance_medical_terms.update(kws)
 
         for rising_kw in rising:
             for seed in finance_medical_terms:
                 if seed in rising_kw or rising_kw in seed:
                     category = next(
-                        (cat for cat, kws in SEED_KEYWORDS.items() if seed in kws),
+                        (cat for cat, kws in seed_pool.items() if seed in kws),
                         "생활정보"
                     )
                     candidates.append({"keyword": rising_kw, "category": category})

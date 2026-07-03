@@ -192,24 +192,33 @@ class WordPressPublisher:
     def upload_image(self, image_data: dict) -> int | None:
         """이미지를 WordPress 미디어 라이브러리에 업로드 (429 재시도 포함)"""
         image_url = image_data.get("url") or image_data.get("medium_url")
-        if not image_url:
+        local_path = image_data.get("local_path")
+        if not image_url and not local_path:
             return None
 
         try:
-            # 이미지 다운로드
-            img_response = requests.get(image_url, timeout=30)
-            if img_response.status_code != 200:
-                return None
-
-            # 파일명 생성
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"featured_{timestamp}.jpg"
+            if local_path and os.path.exists(local_path):
+                with open(local_path, "rb") as f:
+                    img_content = f.read()
+                filename = os.path.basename(local_path)
+                if not filename.endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                    filename += '.png'
+            else:
+                # 이미지 다운로드
+                img_response = requests.get(image_url, timeout=30)
+                if img_response.status_code != 200:
+                    return None
+                img_content = img_response.content
+                # 파일명 생성
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"featured_{timestamp}.jpg"
 
             # WordPress에 업로드 - multipart/form-data 방식 (WAF 우회)
             # Content-Type을 None으로 설정해 세션 기본값(application/json)을 제거
             # → requests가 multipart boundary를 자동으로 설정하게 함
+            mime_type = mimetypes.guess_type(filename)[0] or "image/jpeg"
             for attempt in range(3):
-                files = {"file": (filename, img_response.content, "image/jpeg")}
+                files = {"file": (filename, img_content, mime_type)}
                 response = self.session.post(
                     self._api_url("media"),
                     files=files,
@@ -330,40 +339,63 @@ class WordPressPublisher:
         tag_ids = self.get_or_create_tags(article.get("tags", []))
         time.sleep(3)
 
-        # 이미지 alt에 포커스 키워드 설정
+        # 이미지 alt 및 다중 이미지 업로드 처리
         focus_kw = article.get("focus_keyword", "")
-        if focus_kw:
-            image_data["alt"] = f"{focus_kw} 이미지"
-            image_data["focus_keyword"] = focus_kw
-
-        # 이미지 업로드 (업로드 후 image_data["_uploaded_url"] 에 실제 URL 저장됨)
-        featured_media_id = self.upload_image(image_data)
-
-        # 본문의 FEATURED_IMAGE 플레이스홀더를 실제 업로드된 이미지 URL로 교체
-        content = article["content"]
-        uploaded_url = image_data.get("_uploaded_url", "")
-        if uploaded_url:
-            # 큰따옴표/작은따옴표 모두 대응
-            content = content.replace('<img src="FEATURED_IMAGE"', f'<img src="{uploaded_url}"')
-            content = content.replace("<img src='FEATURED_IMAGE'", f'<img src="{uploaded_url}"')
-            # 위 패턴으로 안 잡힌 경우 단순 치환
-            if 'FEATURED_IMAGE' in content:
-                content = content.replace('FEATURED_IMAGE', uploaded_url)
-            # 그래도 본문에 이미지가 없으면 첫 번째 </h2> 바로 뒤에 삽입
-            if uploaded_url not in content:
-                img_html = (
-                    f'<figure style="margin:25px 0;text-align:center;">'
-                    f'<img src="{uploaded_url}" alt="{focus_kw} 이미지" '
-                    f'style="max-width:100%;height:auto;border-radius:8px;" />'
-                    f'<figcaption style="font-size:13px;color:#888;margin-top:6px;">'
-                    f'{focus_kw} 관련 이미지</figcaption></figure>'
-                )
-                content = content.replace('</h2>', f'</h2>{img_html}', 1)
+        if isinstance(image_data, dict):
+            images_list = [image_data]
+        elif isinstance(image_data, list):
+            images_list = image_data
         else:
-            # 업로드 실패 시 FEATURED_IMAGE 관련 블록 전체 제거
+            images_list = []
+
+        uploaded_urls = []
+        featured_media_id = None
+
+        for i, img in enumerate(images_list):
+            if focus_kw:
+                img["alt"] = f"{focus_kw} 이미지 {i+1}"
+                img["focus_keyword"] = focus_kw
+            
+            print(f"  [이미지 {i+1}/{len(images_list)}] WordPress 업로드 중...")
+            media_id = self.upload_image(img)
+            time.sleep(3)  # Rate limiting 대비 대기
+            
+            if media_id:
+                if featured_media_id is None:
+                    featured_media_id = media_id
+                uploaded_urls.append(img.get("_uploaded_url", ""))
+            else:
+                uploaded_urls.append("")
+
+        # 본문의 이미지 플레이스홀더를 실제 업로드된 이미지 URL로 교체
+        content = article["content"]
+        
+        # 1. FEATURED_IMAGE 치환
+        url_1 = uploaded_urls[0] if len(uploaded_urls) >= 1 else ""
+        if url_1:
+            content = content.replace('FEATURED_IMAGE', url_1)
+        else:
             content = re.sub(r'<figure[^>]*>[\s\S]*?FEATURED_IMAGE[\s\S]*?</figure>', '', content)
             content = re.sub(r'<img[^>]*FEATURED_IMAGE[^>]*/>', '', content)
             content = content.replace('FEATURED_IMAGE', '')
+
+        # 2. BODY_IMAGE_1 치환
+        url_2 = uploaded_urls[1] if len(uploaded_urls) >= 2 else ""
+        if url_2:
+            content = content.replace('BODY_IMAGE_1', url_2)
+        else:
+            content = re.sub(r'<figure[^>]*>[\s\S]*?BODY_IMAGE_1[\s\S]*?</figure>', '', content)
+            content = re.sub(r'<img[^>]*BODY_IMAGE_1[^>]*/>', '', content)
+            content = content.replace('BODY_IMAGE_1', '')
+
+        # 3. BODY_IMAGE_2 치환
+        url_3 = uploaded_urls[2] if len(uploaded_urls) >= 3 else ""
+        if url_3:
+            content = content.replace('BODY_IMAGE_2', url_3)
+        else:
+            content = re.sub(r'<figure[^>]*>[\s\S]*?BODY_IMAGE_2[\s\S]*?</figure>', '', content)
+            content = re.sub(r'<img[^>]*BODY_IMAGE_2[^>]*/>', '', content)
+            content = content.replace('BODY_IMAGE_2', '')
 
         # URL 슬러그 설정
         url_slug = article.get("url_slug", "")
@@ -451,3 +483,125 @@ class WordPressPublisher:
         except Exception as e:
             print(f"  WordPress 연결 오류: {e}")
             return False
+
+    def create_essential_pages(self):
+        """애드센스 승인 필수 4대 페이지 자동 생성 (없을 경우에만)"""
+        essential_pages = {
+            "about-us": {
+                "title": "사이트 소개",
+                "content": """
+<h2>WinOne 매체 소개</h2>
+<p>저희 사이트는 일상생활 속에서 꼭 필요한 실용 정보와 팁을 제공하는 신뢰성 있는 전문 정보 플랫폼입니다.</p>
+<p>독자 여러분의 일상(Life)과 근로(Worker) 전반에 걸쳐 유용하고 유익한 가이드를 제공하기 위해 항상 정확한 팩트와 최신 정책을 기반으로 글을 발행하고 있습니다.</p>
+<h3>핵심 가치</h3>
+<ul>
+  <li><strong>정확성</strong>: 정부 부처 및 공신력 있는 기관의 공식 데이터를 바탕으로 신뢰할 수 있는 정보만을 다룹니다.</li>
+  <li><strong>가독성</strong>: 복잡한 행정 정책이나 금융 용어를 직관적인 표와 요약본으로 재해석하여 누구나 이해하기 쉽게 전달합니다.</li>
+  <li><strong>실용성</strong>: 당장 실생활이나 직장 업무에 적용할 수 있는 유익한 팁을 우선으로 발굴합니다.</li>
+</ul>
+<p>앞으로도 양질의 정보 서비스 제공을 위해 끊임없이 노력하겠습니다. 방문해 주셔서 감사합니다.</p>
+"""
+            },
+            "privacy-policy": {
+                "title": "개인정보처리방침",
+                "content": """
+<h2>개인정보처리방침</h2>
+<p>본 사이트는 이용자의 개인정보를 중요시하며, '개인정보 보호법' 등 관련 법령을 준수하고 있습니다. 본 방침은 이용자께서 제공하시는 개인정보가 어떠한 용도와 방식으로 이용되고 있으며, 개인정보보호를 위해 어떠한 조치가 취해지고 있는지 알려드립니다.</p>
+<h3>1. 수집하는 개인정보 항목</h3>
+<p>본 사이트는 문의 접수, 댓글 작성 등을 위해 아래와 같은 개인정보를 수집할 수 있습니다.</p>
+<ul>
+  <li>수집 항목: 이름, 이메일 주소, 접속 로그, 쿠키, 접속 IP 정보 등</li>
+  <li>수집 방법: 홈페이지 문의 폼 및 댓글 기능 이용 시 자발적 입력</li>
+</ul>
+<h3>2. 개인정보의 수집 및 이용목적</h3>
+<p>수집한 개인정보는 다음의 목적을 위해 활용합니다.</p>
+<ul>
+  <li>이용자의 문의사항 답변 및 고객 관리</li>
+  <li>서비스 이용 통계 분석 및 품질 향상</li>
+</ul>
+<h3>3. 개인정보의 보유 및 이용기간</h3>
+<p>이용자의 개인정보는 원칙적으로 개인정보의 수집 및 이용목적이 달성되면 지체 없이 파기합니다. 단, 관계법령의 규정에 의하여 보존할 필요가 있는 경우 일정 기간 동안 보관합니다.</p>
+<h3>4. 제3자 제공 및 위탁</h3>
+<p>본 사이트는 이용자의 동의 없이 개인정보를 외부에 제공하거나 위탁하지 않습니다. 단, 법령의 규정에 의거하거나 수사 목적으로 법적 절차에 따라 요구가 있는 경우는 예외로 합니다.</p>
+<h3>5. 쿠키(Cookie)의 운용 및 거부</h3>
+<p>본 사이트는 방문자에게 맞춤형 서비스를 제공하기 위해 쿠키를 사용할 수 있습니다. 이용자는 웹 브라우저 설정을 통해 쿠키 지정을 거부하거나 삭제할 수 있습니다.</p>
+"""
+            },
+            "terms": {
+                "title": "이용약관",
+                "content": """
+<h2>이용약관</h2>
+<h3>제1조 (목적)</h3>
+<p>본 약관은 본 웹사이트(이하 '사이트')가 제공하는 모든 정보 및 서비스의 이용조건과 절차, 이용자와 사이트 간의 권리, 의무 및 책임 사항을 규정함을 목적으로 합니다.</p>
+<h3>제2조 (이용의 제한 및 책임)</h3>
+<p>1. 이용자는 본 사이트가 제공하는 정보를 자유롭게 이용할 수 있으나, 상업적인 목적으로 무단 복제, 배포 또는 도용하는 행위는 금지됩니다.</p>
+<p>2. 사이트 내에 수록된 정보는 최대한 신뢰할 수 있는 자료를 바탕으로 작성되었으나, 시점의 경과나 법령 개정 등으로 인해 실제와 다를 수 있으므로 이용자 본인의 중요한 결정 시 반드시 공식 대조를 하시기 바랍니다. 본 사이트의 정보를 신뢰하여 발생한 직/간접적인 결과에 대해 사이트 운영자는 법적 책임을 지지 않습니다.</p>
+<h3>제3조 (서비스의 변경 및 중단)</h3>
+<p>본 사이트는 사전 고지 없이 사이트의 구성, 정보 제공 범위, 주소를 변경하거나 일시적으로 서비스를 중단할 수 있습니다.</p>
+<h3>제4조 (관할 법원)</h3>
+<p>본 서비스 이용과 관련하여 발생한 분쟁에 대해서는 사이트 운영자의 소재지를 관할하는 법원을 전담 관할 법원으로 합니다.</p>
+"""
+            },
+            "contact": {
+                "title": "문의하기",
+                "content": """
+<h2>문의하기</h2>
+<p>저희 사이트의 콘텐츠 제휴, 오탈자 제보, 정보 오류 수정 요청, 혹은 광고 문의가 있으신 경우 아래 연락처로 메일을 보내주시기 바랍니다.</p>
+<div style="background:#f8f9fa;border:1px solid #dee2e6;padding:15px;margin:20px 0;border-radius:6px;">
+  <strong>📧 이메일 문의처</strong><br>
+  이메일: <a href="mailto:mignito89@gmail.com">mignito89@gmail.com</a><br>
+  (영업일 기준 2~3일 이내에 회신해 드립니다.)
+</div>
+<p>더 유익하고 정확한 직장인 및 일상 정보를 전달하기 위해 독자분들의 소중한 의견을 적극 반영하겠습니다. 감사합니다.</p>
+"""
+            }
+        }
+
+        print("\n[자가진단] 애드센스 승인 필수 정적 페이지 검사 중...")
+        for slug, page_info in essential_pages.items():
+            try:
+                # 1. 페이지 조회 (slug로 확인)
+                response = self._get(
+                    f"{self.wp_url}/wp-json/wp/v2/pages",
+                    params={"slug": slug, "status": "any"},
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    pages = response.json()
+                    if pages and len(pages) > 0:
+                        p = pages[0]
+                        if p.get("status") != "publish":
+                            # 임시저장(draft)인 경우 공개 발행(publish)으로 전환
+                            print(f"  → 발견: '{page_info['title']}' ({slug}) - 임시저장 상태 → 발행 상태로 공개 전환 중...")
+                            self._post(
+                                f"{self.wp_url}/wp-json/wp/v2/pages/{p['id']}",
+                                json={"status": "publish"},
+                                timeout=10
+                            )
+                        else:
+                            print(f"  [OK] 이미 존재함: '{page_info['title']}' ({p.get('link')})")
+                        continue
+                
+                # 2. 존재하지 않으면 생성
+                print(f"  → 누락: '{page_info['title']}' ({slug}) 페이지 생성 중...")
+                create_data = {
+                    "title": page_info["title"],
+                    "content": page_info["content"],
+                    "status": "publish",
+                    "slug": slug,
+                    "comment_status": "closed",
+                    "ping_status": "closed"
+                }
+                
+                resp = self._post(
+                    f"{self.wp_url}/wp-json/wp/v2/pages",
+                    json=create_data,
+                    timeout=15
+                )
+                if resp.status_code == 201:
+                    print(f"    ✓ 생성 및 발행 완료: {resp.json().get('link')}")
+                else:
+                    print(f"    ❌ 생성 실패 (HTTP {resp.status_code}): {resp.text[:100]}")
+                time.sleep(2)
+            except Exception as e:
+                print(f"  '{page_info['title']}' 페이지 처리 중 오류 (무시하고 계속): {e}")

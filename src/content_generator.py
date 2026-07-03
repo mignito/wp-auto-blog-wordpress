@@ -7,7 +7,8 @@
 """
 
 import os
-import anthropic
+from google import genai
+from google.genai import types
 import json
 import re
 import requests
@@ -46,14 +47,18 @@ class ContentGenerator:
 4. 금지: "물론", "또한", "따라서", "이처럼", "결론적으로" 사용 금지
 5. HTML 구조 엄수, 마크다운 절대 금지
 
-【SEO 필수 규칙】
+【SEO/GEO 필수 규칙】
 - H2 2개 이상에 포커스 키워드 포함
 - 첫 문단 10% 이내 키워드 자연 배치
 - 키워드 밀도 1.5~2.5% (15~20회)
 - <strong> 태그로 키워드 강조 3회 이상
-- 외부 링크 2개 이상 (공신력 기관, DoFollow)
-- 내부 링크 1개: <a href="/관련글/">관련글</a>
+- 외부 링크: 제공된 외부 링크 목록의 URL과 앵커 텍스트를 활용하여 2개 이상 본문에 자연스럽게 DoFollow 링크로 삽입하십시오. 링크는 정보의 근거를 보강하는 인라인 인용 형태로 구성하십시오. (예: "국세청의 [양도세 세율 안내](URL)에 따르면...")
+- 내부 링크: 가짜 내부 링크(예: /관련글/)는 웹사이트 크롤링 에러(404)를 유발하여 SEO 감점 요인이 되므로 절대 본문에 직접 작성하지 마십시오. (하단에 관련 글 섹션이 시스템에서 자동 추가됩니다.)
 - 총 분량: 1500~2000자
+
+【정보 신뢰도 & GEO(Generative Engine Optimization) 규칙】
+1. Direct Answer (피처드 스니펫 최적화): 도입부 극초반(첫 번째 H2 이전)에 검색 키워드에 대한 결론이나 정답을 2-3줄 내외로 일목요연하게 정리한 요점 요약 박스(<div style="background:#f1f3f4;border-left:4px solid #1a73e8;padding:12px 15px;margin:15px 0;border-radius:4px;"><strong>💡 핵심 요약</strong><br>내용</div>)를 작성하십시오.
+2. 구체적 통계 및 데이터 강조: 본문에 관련 조사결과, 퍼센트(%), 금액 등 구체적인 데이터 수치를 명시하고 이를 표(Table)나 강조 텍스트로 시각화하십시오.
 
 【스타일】
 중요 내용: <span style="color:#1a73e8;font-weight:bold;">내용</span>
@@ -62,9 +67,13 @@ class ContentGenerator:
 주의박스: <div style="background:#f8d7da;border-left:4px solid #dc3545;padding:12px 15px;margin:15px 0;border-radius:4px;"><strong>⚠️ 주의</strong><br>내용</div>
 꿀팁박스: <div style="background:#d4edda;border-left:4px solid #28a745;padding:12px 15px;margin:15px 0;border-radius:4px;"><strong>✅ 꿀팁</strong><br>내용</div>
 
-【이미지】3번째 H2 직후 1개 삽입 (user 메시지의 이미지 HTML 형식 그대로 사용)
+【이미지 삽입】
+본문 흐름에 맞추어 3개의 이미지를 아래 지정된 위치에 각각 정확히 삽입하십시오. (user 메시지에서 전달된 이미지 HTML 템플릿의 src 플레이스홀더를 그대로 사용하십시오)
+- 첫 번째 이미지 (FEATURED_IMAGE): 첫 번째 H2 바로 아래에 삽입
+- 두 번째 이미지 (BODY_IMAGE_1): 세 번째 H2 바로 아래에 삽입
+- 세 번째 이미지 (BODY_IMAGE_2): 다섯 번째 H2 바로 아래(또는 FAQ 바로 전 H2 아래)에 삽입
 
-【구성순서】도입부 → H2(정의/개요+표) → H2(방법/절차+ol) → H2(주의사항+표) → H2(사례/팁) → H2(FAQ: <dl><dt><dd>) → H2(마치며+RELATED_POSTS_PLACEHOLDER)
+【구성순서】도입부 → Direct Answer 핵심 요약 박스 → H2(정의/개요+FEATURED_IMAGE+표) → H2(방법/절차+ol) → H2(주의사항+BODY_IMAGE_1+표) → H2(사례/팁) → H2(마치며/FAQ전+BODY_IMAGE_2) → H2(FAQ: <dl><dt><dd>) → H2(맺음말+RELATED_POSTS_PLACEHOLDER)
 
 HTML만 출력."""
 
@@ -76,32 +85,66 @@ HTML만 출력."""
         "{year}년 {keyword} {n}단계 실전 가이드",
     ]
 
-    def __init__(self):
-        self.client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-        self.model = "claude-sonnet-4-6"               # 본문 생성용 (고품질)
-        self.cheap_model = "claude-haiku-4-5-20251001" # 아웃라인/키워드용 (저렴)
+    def __init__(self, site: str = "life"):
+        self.site = site
+        self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        self.model = "gemini-3.1-flash-lite"                 # 본문 생성용 (고품질)
+        self.cheap_model = "gemini-3.1-flash-lite"         # 아웃라인/키워드용 (저렴)
 
-    def _call_claude(self, system_prompt, user_prompt: str, max_tokens: int = 4000, cheap: bool = False) -> str:
-        """Claude API 호출 (529 과부하 시 최대 3회 재시도)"""
+    def _call_gemini(self, system_prompt, user_prompt: str, max_tokens: int = 4000, cheap: bool = False) -> str:
+        """Gemini API 호출 (503/429 대기 및 재시도 포함)"""
         import time
         model = self.cheap_model if cheap else self.model
+        
+        if isinstance(system_prompt, list):
+            system_str = "\n".join([item["text"] for item in system_prompt if "text" in item])
+        else:
+            system_str = str(system_prompt)
+            
+        config = types.GenerateContentConfig(
+            system_instruction=system_str,
+            max_output_tokens=max_tokens,
+            temperature=0.7,
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
+            safety_settings=[
+                types.SafetySetting(
+                    category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                    threshold=types.HarmBlockThreshold.BLOCK_NONE
+                ),
+                types.SafetySetting(
+                    category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                    threshold=types.HarmBlockThreshold.BLOCK_NONE
+                ),
+                types.SafetySetting(
+                    category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                    threshold=types.HarmBlockThreshold.BLOCK_NONE
+                ),
+                types.SafetySetting(
+                    category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                    threshold=types.HarmBlockThreshold.BLOCK_NONE
+                ),
+            ]
+        )
+        
         last_error = None
         for attempt in range(3):
             try:
-                message = self.client.messages.create(
+                response = self.client.models.generate_content(
                     model=model,
-                    max_tokens=max_tokens,
-                    messages=[{"role": "user", "content": user_prompt}],
-                    system=system_prompt
+                    contents=user_prompt,
+                    config=config
                 )
-                result = message.content[0].text
-                return self._clean_response(result)
+                return self._clean_response(response.text)
             except Exception as e:
                 last_error = e
-                err_str = str(e)
-                if "529" in err_str or "overloaded" in err_str.lower():
-                    wait = 30 * (attempt + 1)
-                    print(f"  Claude API 과부하(529). {wait}초 후 재시도 ({attempt+1}/3)...")
+                err_str = str(e).lower()
+                is_retryable = any(
+                    term in err_str
+                    for term in ["429", "503", "quota", "overloaded", "unavailable", "demand", "resource_exhausted"]
+                )
+                if is_retryable:
+                    wait = 15 * (attempt + 1)
+                    print(f"  Gemini API 과부하/할당량 대기... {wait}초 후 재시도 (에러: {str(e)[:60]})")
                     time.sleep(wait)
                 else:
                     raise
@@ -150,6 +193,13 @@ HTML만 출력."""
         text = re.sub(r'\s*```$', '', text.strip())
         text = re.sub(r'```html', '', text)
         text = re.sub(r'```', '', text)
+        
+        # DOCTYPE, html, head, body 랩퍼 태그 제거 (워드프레스 삽입 최적화)
+        text = re.sub(r'<!DOCTYPE[^>]*>', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'</?html[^>]*>', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'<head>[\s\S]*?</head>', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'</?body[^>]*>', '', text, flags=re.IGNORECASE)
+        
         return text.strip()
 
     def generate_outline(self, keyword_data: dict) -> dict:
@@ -176,7 +226,7 @@ Rank Math SEO 만점 기준 아웃라인을 JSON으로 작성:
 
 JSON만 출력."""
 
-        result = self._call_claude(system, user, max_tokens=1000, cheap=True)
+        result = self._call_gemini(system, user, max_tokens=1000, cheap=True)
 
         json_match = re.search(r'\{.*\}', result, re.DOTALL)
         if json_match:
@@ -199,7 +249,12 @@ JSON만 출력."""
         keyword = keyword_data["keyword"]
         category = keyword_data["category"]
 
-        # 정적 부분을 cache_control로 캐싱, 동적 카테고리는 별도 블록으로 분리
+        # 사이트별 블로거 페르소나 설정 (E-E-A-T 대응)
+        if self.site == "worker":
+            persona = "당신은 근로기준법 및 직장인 복지/재테크 분야 15년 경력의 인사(HR) 전문 블로거입니다. 직장인과 근로자들에게 실질적이고 정확한 법률/혜택 정보를 이해하기 쉽게 전달합니다."
+        else:
+            persona = f"당신은 {category} 분야 15년 경력 블로거입니다."
+
         system = [
             {
                 "type": "text",
@@ -208,7 +263,7 @@ JSON만 출력."""
             },
             {
                 "type": "text",
-                "text": f"당신은 {category} 분야 15년 경력 블로거입니다."
+                "text": persona
             }
         ]
 
@@ -216,13 +271,28 @@ JSON만 출력."""
         lsi_keywords = ", ".join(outline.get("lsi_keywords", []))
         faq_text = json.dumps(outline.get("faq", []), ensure_ascii=False)
 
-        # 이미지 HTML 템플릿을 user 메시지로 이동 (system을 정적으로 유지하기 위함)
-        image_html = (
-            f'<figure style="margin:25px 0;text-align:center;">'
-            f'<img src="FEATURED_IMAGE" alt="{keyword} 이미지" style="max-width:100%;height:auto;border-radius:8px;" />'
-            f'<figcaption style="font-size:13px;color:#888;margin-top:6px;">{keyword} 관련 이미지</figcaption>'
+        # 이미지 HTML 템플릿들을 user 메시지로 이동 (system을 정적으로 유지하기 위함)
+        image_html_1 = (
+            f'<figure style="margin:25px 0;text-align:center;">\n'
+            f'  <img src="FEATURED_IMAGE" alt="{keyword} 이미지 1" style="max-width:100%;height:auto;border-radius:8px;" />\n'
+            f'  <figcaption style="font-size:13px;color:#888;margin-top:6px;">{keyword} 관련 설명</figcaption>\n'
             f'</figure>'
         )
+        image_html_2 = (
+            f'<figure style="margin:25px 0;text-align:center;">\n'
+            f'  <img src="BODY_IMAGE_1" alt="{keyword} 이미지 2" style="max-width:100%;height:auto;border-radius:8px;" />\n'
+            f'  <figcaption style="font-size:13px;color:#888;margin-top:6px;">{keyword} 상세 분석</figcaption>\n'
+            f'</figure>'
+        )
+        image_html_3 = (
+            f'<figure style="margin:25px 0;text-align:center;">\n'
+            f'  <img src="BODY_IMAGE_2" alt="{keyword} 이미지 3" style="max-width:100%;height:auto;border-radius:8px;" />\n'
+            f'  <figcaption style="font-size:13px;color:#888;margin-top:6px;">{keyword} 요약 정리</figcaption>\n'
+            f'</figure>'
+        )
+
+        ext_links = outline.get("external_links", [])
+        ext_links_text = json.dumps(ext_links, ensure_ascii=False) if ext_links else "없음"
 
         user = f"""키워드: "{keyword}"
 제목: {outline.get('main_title', '')}
@@ -237,12 +307,20 @@ FAQ:
 
 LSI 키워드: {lsi_keywords}
 
-이미지 HTML (3번째 H2 직후 삽입):
-{image_html}
+외부 링크 목록 (인라인 출처 링크로 본문 내 자연스럽게 인용하여 삽입):
+{ext_links_text}
+
+이미지 HTML 템플릿:
+- 이미지 1 (첫 번째 H2 직후 삽입):
+{image_html_1}
+- 이미지 2 (세 번째 H2 직후 삽입):
+{image_html_2}
+- 이미지 3 (다섯 번째 H2 직후 삽입):
+{image_html_3}
 
 위 내용으로 HTML 블로그 글을 작성하세요. HTML만 출력."""
 
-        result = self._call_claude(system, user, max_tokens=5000)
+        result = self._call_gemini(system, user, max_tokens=5000)
 
         if not result.rstrip().endswith('>'):
             print("  본문이 잘린 것 같습니다. HTML 복구 시도...")
@@ -259,7 +337,7 @@ LSI 참고: {", ".join(lsi[:5])}
 JSON 배열만 출력."""
 
         try:
-            result = self._call_claude(system, user, max_tokens=150, cheap=True)
+            result = self._call_gemini(system, user, max_tokens=150, cheap=True)
             match = re.search(r'\[.*?\]', result, re.DOTALL)
             if match:
                 keywords = json.loads(match.group())

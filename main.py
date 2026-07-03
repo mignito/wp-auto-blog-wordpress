@@ -15,8 +15,30 @@ import requests
 from datetime import datetime
 from dotenv import load_dotenv
 
-# .env 파일 로드
+# 한글/특수문자 콘솔 출력 보장 (cp949 인코딩 오류 방지)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
+# --site 인자 확인하여 해당하는 환경 설정 로드
+site = "life"
+for i, arg in enumerate(sys.argv):
+    if arg == "--site" and i + 1 < len(sys.argv):
+        site = sys.argv[i + 1]
+    elif arg.startswith("--site="):
+        site = arg.split("=")[1]
+
+# 기본 .env 로드 (공용 API 키 포함)
 load_dotenv()
+
+# 사이트가 worker인 경우 .env.worker로 덮어쓰기
+if site == "worker":
+    if os.path.exists(".env.worker"):
+        print("  [안내] winone-worker.com 설정(.env.worker) 로드 중...")
+        load_dotenv(".env.worker", override=True)
+    else:
+        print("  [경고] .env.worker 파일이 존재하지 않아 기본 .env 설정을 사용합니다.")
 
 # src 폴더 경로 추가
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -86,7 +108,7 @@ def is_duplicate_topic(keyword: str, recent_titles: list) -> bool:
 
 def check_env_vars():
     """필수 환경변수 확인"""
-    required = ["ANTHROPIC_API_KEY", "WP_URL", "WP_USERNAME", "WP_APP_PASSWORD"]
+    required = ["GEMINI_API_KEY", "WP_URL", "WP_USERNAME", "WP_APP_PASSWORD"]
     optional = ["PEXELS_API_KEY", "NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"]
 
     missing = [v for v in required if not os.getenv(v)]
@@ -119,11 +141,31 @@ def save_article_log(keyword_data: dict, article: dict, post_url: str):
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
 
-    print(f"\n로그 저장: {log_file}")
+def check_sitemap():
+    """사이트맵 활성화 자가진단"""
+    wp_url = os.getenv("WP_URL", "").rstrip("/")
+    sitemaps = [f"{wp_url}/sitemap.xml", f"{wp_url}/sitemap_index.xml"]
+    print("\n[자가진단] 사이트맵 활성화 검사 중...")
+    
+    found = False
+    for url in sitemaps:
+        try:
+            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}, timeout=10)
+            if resp.status_code == 200:
+                print(f"  [OK] 사이트맵 주소 발견: {url} (HTTP 200)")
+                found = True
+                break
+        except Exception as e:
+            pass
+            
+    if not found:
+        print("  [경고] 사이트맵(sitemap.xml 또는 sitemap_index.xml)이 감지되지 않았습니다.")
+        print("  → 구글 애드센스 승인을 위해 Rank Math 또는 Yoast SEO 플러그인 설정에서 XML 사이트맵이 활성화되어 있는지 확인해 주세요.")
 
 
 def main():
     parser = argparse.ArgumentParser(description="WordPress 자동 블로그 포스팅")
+    parser.add_argument("--site", type=str, default="life", choices=["life", "worker"], help="대상 사이트 지정 (life 또는 worker)")
     parser.add_argument("--test", action="store_true", help="연결 테스트만 실행")
     parser.add_argument("--dry", action="store_true", help="글 생성만 하고 발행 안 함")
     parser.add_argument("--test-post", action="store_true", help="더미 글로 WordPress 발행만 테스트 (AI API 미사용)")
@@ -132,7 +174,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 50)
-    print(f"WordPress 자동 포스팅 시작: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"WordPress 자동 포스팅 시작 (사이트: {args.site}): {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print("=" * 50)
 
     check_env_vars()
@@ -144,9 +186,15 @@ def main():
         print("  WordPress 연결 실패 - 환경변수(WP_URL, WP_USERNAME, WP_APP_PASSWORD)를 확인하세요.")
         sys.exit(1)
 
+    # 애드센스 승인 필수 정적 페이지 자가진단 및 자동 생성
+    publisher.create_essential_pages()
+
+    # 사이트맵 검사 자가진단
+    check_sitemap()
+
     # 연결 테스트 모드
     if args.test:
-        print("\n[연결 테스트 모드] 연결 성공")
+        print("\n[연결 테스트 모드] 자가진단 및 연결 테스트 성공")
         return
 
     # 더미 발행 테스트 (AI API 미사용)
@@ -184,7 +232,7 @@ def main():
         print(f"\n[수동 키워드] {args.keyword} ({args.category})")
     else:
         print("\n[Step 1] 트렌드 키워드 탐색")
-        trend_finder = TrendFinder()
+        trend_finder = TrendFinder(site=args.site)
         ranked_keywords = trend_finder.find_ranked_keywords()
 
         # 최근 10개 글 제목 가져오기 (중복 방지)
@@ -212,7 +260,7 @@ def main():
 
     # Step 2: 콘텐츠 생성 (publisher의 인증 세션을 전달해 관련글 로딩)
     print("\n[Step 2] 콘텐츠 생성")
-    content_gen = ContentGenerator()
+    content_gen = ContentGenerator(site=args.site)
     article = content_gen.generate_article(keyword_data, session=publisher.session)
     print(f"  제목: {article['title']}")
     print(f"  태그: {', '.join(article['tags'])}")
@@ -221,39 +269,52 @@ def main():
     if args.dry:
         print("\n[미리보기 모드 - 발행 안 함]")
 
-        # 이미지 실제 다운로드 (미리보기용)
-        print("  이미지 가져오는 중...")
+        # 이미지 실제 다운로드 (미리보기용 3장)
+        print("  이미지 3장 가져오는 중...")
         image_fetcher = ImageFetcher()
-        image_data = image_fetcher.get_image(
+        images_list = image_fetcher.get_images(
             keyword_data.get("keyword_en", keyword_data["keyword"]),
-            keyword_data["category"]
+            keyword_data["category"],
+            keyword_data["keyword"],
+            count=3
         )
 
-        # 이미지 로컬 저장
-        image_html = ""
-        img_filename = f"preview_img_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        if image_data.get("medium_url") or image_data.get("url"):
-            success = image_fetcher.download_image(image_data, img_filename)
-            if success:
-                credit = image_data.get("photographer", "")
-                source = image_data.get("source", "").capitalize()
-                credit_text = f"{source} / {credit}" if credit else source
-                image_html = f'<img src="{img_filename}" alt="{article.get("focus_keyword", "")} 이미지" style="max-width:100%;height:auto;border-radius:8px;margin:15px 0;" />'
-                if credit_text:
-                    image_html += f'<p style="font-size:12px;color:#999;margin-top:4px;">📷 사진 출처: {credit_text}</p>'
-                print(f"  이미지 저장 완료: {img_filename}")
-            else:
-                print("  이미지 저장 실패")
-
-        # FEATURED_IMAGE 플레이스홀더를 실제 이미지로 교체
         content = article['content']
-        if image_html:
-            content = content.replace('<img src="FEATURED_IMAGE"', f'<img src="{img_filename}"')
-        else:
-            content = content.replace('<img src="FEATURED_IMAGE"', '<img src="" style="display:none"')
+        placeholders = ['FEATURED_IMAGE', 'BODY_IMAGE_1', 'BODY_IMAGE_2']
 
-        # 빈 src 이미지 태그 제거
+        for i, img_data in enumerate(images_list):
+            placeholder = placeholders[i]
+            img_filename = f"preview_img_{i+1}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            success = False
+            
+            if img_data.get("local_path"):
+                import shutil
+                try:
+                    shutil.copy(img_data["local_path"], img_filename)
+                    success = True
+                except Exception as e:
+                    print(f"  로컬 이미지 {i+1} 복사 실패: {e}")
+                    success = False
+            elif img_data.get("medium_url") or img_data.get("url"):
+                success = image_fetcher.download_image(img_data, img_filename)
+
+            if success:
+                credit = img_data.get("photographer", "")
+                source = img_data.get("source", "").capitalize()
+                credit_text = f"{source} / {credit}" if credit else source
+                print(f"  이미지 {i+1} 저장 완료: {img_filename}")
+                content = content.replace(placeholder, img_filename)
+            else:
+                print(f"  이미지 {i+1} 저장 실패 → 플레이스홀더 제거")
+                content = content.replace(placeholder, "")
+
+        # 미치환 플레이스홀더 정리
+        for placeholder in placeholders:
+            content = content.replace(placeholder, "")
+
+        # 빈 src 이미지 태그 및 관련 figure 제거
         import re as _re
+        content = _re.sub(r'<figure[^>]*>\s*<img[^>]*src=""[^>]*>\s*(?:<figcaption[^>]*>.*?</figcaption>\s*)?</figure>', '', content)
         content = _re.sub(r'<img src=""[^/]*/>', '', content)
         content = _re.sub(r'<img src="" [^>]*/>', '', content)
 
@@ -298,21 +359,20 @@ def main():
         print(f"  → 파일을 크롬으로 열어서 확인하세요!")
         return
 
-    # Step 3: 이미지 가져오기
-    print("\n[Step 3] 이미지 선택")
+    # Step 3: 이미지 가져오기 (3장)
+    print("\n[Step 3] 이미지 선택 (3장)")
     image_fetcher = ImageFetcher()
-    image_data = image_fetcher.get_image(
+    images_list = image_fetcher.get_images(
         keyword_data.get("keyword_en", keyword_data["keyword"]),
-        keyword_data["category"]
+        keyword_data["category"],
+        keyword_data["keyword"],
+        count=3
     )
-    if image_data.get("url"):
-        print(f"  이미지 선택 완료: {image_data['photographer']}")
-    else:
-        print("  이미지 없음 (기본 이미지 사용)")
+    print(f"  이미지 선택 완료: {len(images_list)}개 획득")
 
     # Step 4: 워드프레스 발행 (연결 확인 시 생성한 인스턴스 재사용)
     print("\n[Step 4] WordPress 발행")
-    post_url = publisher.publish(article, image_data)
+    post_url = publisher.publish(article, images_list)
 
     # 로그 저장
     save_article_log(keyword_data, article, post_url)

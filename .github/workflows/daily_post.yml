@@ -2,8 +2,12 @@ name: WordPress Auto Blog
 
 on:
   schedule:
-    - cron: '0 1 * * *'   # 한국시간 오전 10시 (KST = UTC+9)
-    - cron: '0 13 * * *'  # 한국시간 오후 10시 (KST = UTC+9)
+    - cron: '0 0 * * *'   # 한국시간 오전 9시 (KST = UTC+9)
+    - cron: '0 4 * * *'   # 한국시간 오후 1시 (KST = UTC+9)
+    - cron: '0 8 * * *'   # 한국시간 오후 5시 (KST = UTC+9)
+    - cron: '0 12 * * *'  # 한국시간 오후 9시 (KST = UTC+9)
+    - cron: '0 16 * * *'  # 한국시간 오전 1시 (KST = UTC+9)
+    - cron: '0 20 * * *'  # 한국시간 오전 5시 (KST = UTC+9)
   workflow_dispatch:
 
 env:
