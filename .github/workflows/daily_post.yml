@@ -43,7 +43,7 @@ jobs:
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
           WP_POST_STATUS: publish
           PYTHONIOENCODING: utf-8
-        run: python main.py
+        run: python main.py --site life
 
       - name: 자동 포스팅 실행 (winone-worker.com)
         env:
@@ -57,7 +57,7 @@ jobs:
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD_2 }}
           WP_POST_STATUS: publish
           PYTHONIOENCODING: utf-8
-        run: python main.py
+        run: python main.py --site worker
 
       - name: 실패 시 알림
         if: failure()
