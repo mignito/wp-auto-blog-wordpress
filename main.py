@@ -163,6 +163,61 @@ def check_sitemap():
         print("  → 구글 애드센스 승인을 위해 Rank Math 또는 Yoast SEO 플러그인 설정에서 XML 사이트맵이 활성화되어 있는지 확인해 주세요.")
 
 
+def delete_old_media(days_to_keep: int = 7):
+    """
+    WordPress에서 days_to_keep(기본 7일)이 경과한 미디어 파일을 조회하여
+    영구 삭제(force=true) 처리하는 로직 (디스크 공간 절약용)
+    """
+    wp_url = os.getenv("WP_URL", "").rstrip("/")
+    username = os.getenv("WP_USERNAME")
+    app_password = os.getenv("WP_APP_PASSWORD")
+
+    if not wp_url or not username or not app_password:
+        return
+
+    try:
+        from datetime import datetime, timedelta
+        cutoff_date = datetime.utcnow() - timedelta(days=days_to_keep)
+        before_iso = cutoff_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        credentials = f"{username}:{app_password}"
+        token = base64.b64encode(credentials.encode()).decode()
+        headers = {"Authorization": f"Basic {token}"}
+
+        print(f"\n[미디어 정리] {days_to_keep}일이 경과한 오래된 미디어 파일 정리 중...")
+
+        resp = requests.get(
+            f"{wp_url}/wp-json/wp/v2/media",
+            headers=headers,
+            params={"before": before_iso, "per_page": 50, "_fields": "id,date"},
+            timeout=15
+        )
+        
+        if resp.status_code == 200:
+            media_list = resp.json()
+            if media_list and isinstance(media_list, list):
+                print(f"  발견된 정리 대상 미디어: {len(media_list)}개")
+                for item in media_list:
+                    media_id = item.get("id")
+                    try:
+                        del_resp = requests.delete(
+                            f"{wp_url}/wp-json/wp/v2/media/{media_id}",
+                            headers=headers,
+                            params={"force": "true"},
+                            timeout=10
+                        )
+                        if del_resp.status_code == 200:
+                            print(f"  [성공] 미디어 #{media_id} 영구 삭제 완료")
+                    except Exception as e:
+                        print(f"  [경고] 미디어 #{media_id} 삭제 시도 실패: {e}")
+            else:
+                print("  정리 대상 미디어가 없습니다.")
+        else:
+            print(f"  미디어 조회 실패 (HTTP {resp.status_code})")
+    except Exception as e:
+        print(f"  [경고] 오래된 미디어 삭제 정리 실패 (무시하고 계속): {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="WordPress 자동 블로그 포스팅")
     parser.add_argument("--site", type=str, default="life", choices=["life", "worker"], help="대상 사이트 지정 (life 또는 worker)")
@@ -191,6 +246,9 @@ def main():
 
     # 사이트맵 검사 자가진단
     check_sitemap()
+
+    # 7일 경과한 오래된 썸네일 이미지 자동 삭제 (웹용량 자동 순환)
+    delete_old_media(7)
 
     # 연결 테스트 모드
     if args.test:
