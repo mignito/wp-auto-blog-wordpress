@@ -163,32 +163,21 @@ def check_sitemap():
         print("  → 구글 애드센스 승인을 위해 Rank Math 또는 Yoast SEO 플러그인 설정에서 XML 사이트맵이 활성화되어 있는지 확인해 주세요.")
 
 
-def delete_old_media(days_to_keep: int = 7):
+def delete_old_media(publisher, days_to_keep: int = 7):
     """
     WordPress에서 days_to_keep(기본 7일)이 경과한 미디어 파일을 조회하여
     영구 삭제(force=true) 처리하는 로직 (디스크 공간 절약용)
     """
-    wp_url = os.getenv("WP_URL", "").rstrip("/")
-    username = os.getenv("WP_USERNAME")
-    app_password = os.getenv("WP_APP_PASSWORD")
-
-    if not wp_url or not username or not app_password:
-        return
-
     try:
         from datetime import datetime, timedelta
         cutoff_date = datetime.utcnow() - timedelta(days=days_to_keep)
         before_iso = cutoff_date.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        credentials = f"{username}:{app_password}"
-        token = base64.b64encode(credentials.encode()).decode()
-        headers = {"Authorization": f"Basic {token}"}
-
         print(f"\n[미디어 정리] {days_to_keep}일이 경과한 오래된 미디어 파일 정리 중...")
 
-        resp = requests.get(
-            f"{wp_url}/wp-json/wp/v2/media",
-            headers=headers,
+        # publisher의 _get 메서드를 사용하여 챌린지 쿠키가 탑재된 세션으로 요청
+        resp = publisher._get(
+            publisher._api_url("media"),
             params={"before": before_iso, "per_page": 50, "_fields": "id,date"},
             timeout=15
         )
@@ -200,9 +189,9 @@ def delete_old_media(days_to_keep: int = 7):
                 for item in media_list:
                     media_id = item.get("id")
                     try:
-                        del_resp = requests.delete(
-                            f"{wp_url}/wp-json/wp/v2/media/{media_id}",
-                            headers=headers,
+                        # publisher의 session을 사용해 force=true로 영구 삭제
+                        del_resp = publisher.session.delete(
+                            publisher._api_url(f"media/{media_id}"),
                             params={"force": "true"},
                             timeout=10
                         )
@@ -248,7 +237,7 @@ def main():
     check_sitemap()
 
     # 7일 경과한 오래된 썸네일 이미지 자동 삭제 (웹용량 자동 순환)
-    delete_old_media(7)
+    delete_old_media(publisher, 7)
 
     # 연결 테스트 모드
     if args.test:
